@@ -364,7 +364,7 @@ rasterize_forward_tensor(
             {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
         );
 
-        gradient_aware_rasterize_forward<<<tile_bounds_dim3, block_dim3>>>(
+        rasterize_forward_unified<true><<<tile_bounds_dim3, block_dim3>>>(
             tile_bounds_dim3,
             img_size_dim3,
             gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
@@ -381,7 +381,7 @@ rasterize_forward_tensor(
             (float3 *)out_dxy.contiguous().data_ptr<float>()
         );
     } else {
-        rasterize_forward<<<tile_bounds_dim3, block_dim3>>>(
+        rasterize_forward_unified<false><<<tile_bounds_dim3, block_dim3>>>(
             tile_bounds_dim3,
             img_size_dim3,
             gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
@@ -392,7 +392,10 @@ rasterize_forward_tensor(
             opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
             final_idx.contiguous().data_ptr<int>(),
             (float3 *)out_img.contiguous().data_ptr<float>(),
-            out_wsum.contiguous().data_ptr<float>()
+            out_wsum.contiguous().data_ptr<float>(),
+            nullptr,
+            nullptr,
+            nullptr
         );
     }
 
@@ -459,7 +462,7 @@ std::
         : torch::Tensor();
 
     if (v_output_dx.has_value()) {
-        gradient_aware_rasterize_backward_kernel<<<tile_bounds, block>>>(
+        rasterize_backward_kernel_unified<true><<<tile_bounds, block>>>(
             tile_bounds,
             img_size,
             gaussians_ids_sorted.contiguous().data_ptr<int>(),
@@ -470,10 +473,10 @@ std::
             opacities.has_value() ? opacities.value().contiguous().data_ptr<float>() : nullptr,
             final_idx.contiguous().data_ptr<int>(),
             (float3 *)v_output.contiguous().data_ptr<float>(),
+            v_render_wsum.contiguous().data_ptr<float>(),
             (float3 *)v_output_dx.value().contiguous().data_ptr<float>(),
             (float3 *)v_output_dy.value().contiguous().data_ptr<float>(),
             (float3 *)v_output_dxy.value().contiguous().data_ptr<float>(),
-            v_render_wsum.contiguous().data_ptr<float>(),
             (float2 *)v_xy.contiguous().data_ptr<float>(),
             (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
             (float3 *)v_conic.contiguous().data_ptr<float>(),
@@ -481,7 +484,7 @@ std::
             opacities.has_value() ? v_opacity.contiguous().data_ptr<float>() : nullptr
         );
     } else {
-        rasterize_backward_kernel<<<tile_bounds, block>>>(
+        rasterize_backward_kernel_unified<false><<<tile_bounds, block>>>(
             tile_bounds,
             img_size,
             gaussians_ids_sorted.contiguous().data_ptr<int>(),
@@ -493,6 +496,9 @@ std::
             final_idx.contiguous().data_ptr<int>(),
             (float3 *)v_output.contiguous().data_ptr<float>(),
             v_render_wsum.contiguous().data_ptr<float>(),
+            nullptr,
+            nullptr,
+            nullptr,
             (float2 *)v_xy.contiguous().data_ptr<float>(),
             (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
             (float3 *)v_conic.contiguous().data_ptr<float>(),
