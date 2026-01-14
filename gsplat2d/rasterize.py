@@ -8,7 +8,7 @@ from torch.autograd import Function
 
 import gsplat2d.cuda as _C
 
-from .utils import bin_and_sort_gaussians, compute_cumulative_intersects
+from .utils import bin_and_group_gaussians_fused
 
 # RasterizeExtras flags (must match config.h)
 RASTERIZE_EXTRAS_NONE = 0
@@ -81,7 +81,14 @@ class _RasterizeGaussians(Function):
 
         depths = torch.zeros_like(xys[..., 0], device=xys.device)
 
-        num_intersects, cum_tiles_hit = compute_cumulative_intersects(num_tiles_hit)
+        num_intersects, gaussian_ids_grouped, tile_bins = bin_and_group_gaussians_fused(
+            num_points,
+            xys,
+            depths,
+            extents,
+            tile_bounds,
+            block_width,
+        )
 
         have_OPA = opacities is not None and opacities.numel() > 0
         have_T = bool(extras & RASTERIZE_EXTRAS_T)
@@ -107,26 +114,8 @@ class _RasterizeGaussians(Function):
                 out_img_dx = out_img_dy = out_img_dxy = torch.empty(0, device=xys.device)
                 out_T_dx = out_T_dy = out_T_dxy = torch.empty(0, device=xys.device)
                 out_S_xy_cross = torch.empty(0, device=xys.device)
-            gaussian_ids_sorted = torch.zeros(0, 1, device=xys.device)
-            tile_bins = torch.zeros(0, 2, device=xys.device)
             final_idx = torch.zeros(img_height, img_width, device=xys.device)
         else:
-            (
-                isect_ids_unsorted,
-                gaussian_ids_unsorted,
-                isect_ids_sorted,
-                gaussian_ids_sorted,
-                tile_bins,
-            ) = bin_and_sort_gaussians(
-                num_points,
-                num_intersects,
-                xys,
-                depths,
-                extents,
-                cum_tiles_hit,
-                tile_bounds,
-                block_width,
-            )
             rasterize_fn = _C.rasterize_forward
             
             (out_img, out_T, out_img_dx, out_img_dy, out_img_dxy,
@@ -134,7 +123,7 @@ class _RasterizeGaussians(Function):
                 tile_bounds,
                 block,
                 img_size,
-                gaussian_ids_sorted,
+                gaussian_ids_grouped,
                 tile_bins,
                 xys,
                 conics,
@@ -153,7 +142,7 @@ class _RasterizeGaussians(Function):
         have_T_d = out_T_dx is not None and out_T_dx.numel() > 0
 
         ctx.save_for_backward(
-            gaussian_ids_sorted,
+            gaussian_ids_grouped,
             tile_bins,
             xys,
             conics,
@@ -177,7 +166,7 @@ class _RasterizeGaussians(Function):
         num_intersects = ctx.num_intersects
 
         (
-            gaussian_ids_sorted,
+            gaussian_ids_grouped,
             tile_bins,
             xys,
             conics,
@@ -205,7 +194,7 @@ class _RasterizeGaussians(Function):
                 img_height,
                 img_width,
                 ctx.block_width,
-                gaussian_ids_sorted,
+                gaussian_ids_grouped,
                 tile_bins,
                 xys,
                 conics,
