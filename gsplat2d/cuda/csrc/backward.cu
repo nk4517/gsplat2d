@@ -476,9 +476,11 @@ __global__ void rasterize_backward_kernel_unified(
                 atomicAdd(v_xy_ptr + 2*g + 0, v_xy_local.x);
                 atomicAdd(v_xy_ptr + 2*g + 1, v_xy_local.y);
 
-                float* v_xy_abs_ptr = (float*)(v_xy_abs);
-                atomicAdd(v_xy_abs_ptr + 2*g + 0, v_xy_abs_local.x);
-                atomicAdd(v_xy_abs_ptr + 2*g + 1, v_xy_abs_local.y);
+                if (v_xy_abs) {
+                    float* v_xy_abs_ptr = (float*)(v_xy_abs);
+                    atomicAdd(v_xy_abs_ptr + 2*g + 0, v_xy_abs_local.x);
+                    atomicAdd(v_xy_abs_ptr + 2*g + 1, v_xy_abs_local.y);
+                }
 
                 if (v_opacity) {
                     atomicAdd(v_opacity + g, v_opacity_local);

@@ -464,7 +464,8 @@ std::
         const c10::optional<torch::Tensor> &v_output_dxy,
         const c10::optional<torch::Tensor> &v_T_dx,
         const c10::optional<torch::Tensor> &v_T_dy,
-        const c10::optional<torch::Tensor> &v_T_dxy
+        const c10::optional<torch::Tensor> &v_T_dxy,
+        unsigned extras
     ) {
     DEVICE_GUARD(xys);
     CHECK_INPUT(xys);
@@ -492,7 +493,9 @@ std::
     const int channels = colors.size(1);
 
     torch::Tensor v_xy = torch::zeros({num_points, 2}, xys.options());
-    torch::Tensor v_xy_abs = torch::zeros({num_points, 2}, xys.options());
+    torch::Tensor v_xy_abs = (extras & RASTERIZE_EXTRAS_XY_ABS)
+        ? torch::zeros({num_points, 2}, xys.options())
+        : torch::Tensor();
     torch::Tensor v_conic = torch::zeros({num_points, 3}, xys.options());
     torch::Tensor v_colors =
         torch::zeros({num_points, channels}, xys.options());
@@ -525,7 +528,7 @@ std::
             v_T_dy.has_value() ? v_T_dy.value().contiguous().data_ptr<float>() : nullptr,
             v_T_dxy.has_value() ? v_T_dxy.value().contiguous().data_ptr<float>() : nullptr,
             (float2 *)v_xy.contiguous().data_ptr<float>(),
-            (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
+            v_xy_abs.defined() ? (float2 *)v_xy_abs.contiguous().data_ptr<float>() : nullptr,
             (float3 *)v_conic.contiguous().data_ptr<float>(),
             (float3 *)v_colors.contiguous().data_ptr<float>(),
             opacities.has_value() ? v_opacity.contiguous().data_ptr<float>() : nullptr
@@ -555,7 +558,7 @@ std::
             nullptr,
             nullptr,
             (float2 *)v_xy.contiguous().data_ptr<float>(),
-            (float2 *)v_xy_abs.contiguous().data_ptr<float>(),
+            v_xy_abs.defined() ? (float2 *)v_xy_abs.contiguous().data_ptr<float>() : nullptr,
             (float3 *)v_conic.contiguous().data_ptr<float>(),
             (float3 *)v_colors.contiguous().data_ptr<float>(),
             opacities.has_value() ? v_opacity.contiguous().data_ptr<float>() : nullptr

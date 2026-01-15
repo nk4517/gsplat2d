@@ -147,5 +147,6 @@ std::
         const c10::optional<torch::Tensor> &v_output_dxy,
         const c10::optional<torch::Tensor> &v_T_dx,
         const c10::optional<torch::Tensor> &v_T_dy,
-        const c10::optional<torch::Tensor> &v_T_dxy
+        const c10::optional<torch::Tensor> &v_T_dxy,
+        unsigned extras
     );

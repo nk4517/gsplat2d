@@ -14,6 +14,7 @@ from .utils import bin_and_sort_gaussians, compute_cumulative_intersects
 RASTERIZE_EXTRAS_NONE = 0
 RASTERIZE_EXTRAS_T = 1 << 0
 RASTERIZE_EXTRAS_UPSCALE_GRADS = 1 << 1
+RASTERIZE_EXTRAS_XY_ABS = 1 << 2
 
 def rasterize_gaussians(
     xys: Float[Tensor, "*batch 2"],
@@ -224,6 +225,7 @@ class _RasterizeGaussians(Function):
                 v_out_T_dx,
                 v_out_T_dy,
                 v_out_T_dxy,
+                ctx.extras,
             )
 
         xys.absgrad = v_xy_abs
