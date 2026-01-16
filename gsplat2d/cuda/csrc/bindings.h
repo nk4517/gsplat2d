@@ -137,24 +137,3 @@ std::
         const c10::optional<torch::Tensor> &v_output_dy,
         const c10::optional<torch::Tensor> &v_output_dxy
     );
-torch::Tensor gradient_aware_upscale_forward_tensor(
-    const torch::Tensor &render,    // [H, W, 3]
-    const torch::Tensor &dx,
-    const torch::Tensor &dy,
-    const torch::Tensor &dxy,
-    int dst_h,
-    int dst_w,
-    const std::tuple<float, float, float, float> &roi  // x1, y1, x2, y2
-);
-
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-gradient_aware_upscale_backward_tensor(
-    const torch::Tensor &grad_output,  // [dst_h, dst_w, 3]
-    const torch::Tensor &render,       // [H, W, 3]
-    const torch::Tensor &dx,
-    const torch::Tensor &dy,
-    const torch::Tensor &dxy,
-    int dst_h,
-    int dst_w,
-    const std::tuple<float, float, float, float> &roi
-);
