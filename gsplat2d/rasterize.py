@@ -26,6 +26,7 @@ def rasterize_gaussians(
     img_height: int,
     img_width: int,
     block_width: int,
+    num_images: int = 1,
     extras: int = 0,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     
@@ -49,6 +50,7 @@ def rasterize_gaussians(
         img_height,
         img_width,
         block_width,
+        num_images,
         extras,
     )
 
@@ -68,6 +70,7 @@ class _RasterizeGaussians(Function):
         img_height: int,
         img_width: int,
         block_width: int,
+        num_images: int,
         extras: int,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         num_points = xys.size(0)
@@ -81,7 +84,7 @@ class _RasterizeGaussians(Function):
 
         depths = torch.zeros_like(xys[..., 0], device=xys.device)
 
-        num_intersects, gaussian_ids_grouped, tile_bins = bin_and_group_gaussians_fused(
+        num_intersects, gaussian_ids_grouped, tile_offsets = bin_and_group_gaussians_fused(
             num_points,
             xys,
             depths,
@@ -94,27 +97,27 @@ class _RasterizeGaussians(Function):
         have_T = bool(extras & RASTERIZE_EXTRAS_T)
 
         if num_intersects < 1:
-            out_img = torch.ones(img_height, img_width, colors.shape[-1], device=xys.device)
+            out_img = torch.ones(num_images, img_height, img_width, colors.shape[-1], device=xys.device)
 
             if have_T:
-                out_T = torch.zeros(img_height, img_width, 1, device=xys.device)
+                out_T = torch.zeros(num_images, img_height, img_width, 1, device=xys.device)
             else:
                 out_T = torch.empty(0, device=xys.device)
 
             if extras & RASTERIZE_EXTRAS_UPSCALE_GRADS:
-                out_img_dx = torch.zeros(img_height, img_width, colors.shape[-1], device=xys.device)
-                out_img_dy = torch.zeros(img_height, img_width, colors.shape[-1], device=xys.device)
-                out_img_dxy = torch.zeros(img_height, img_width, colors.shape[-1], device=xys.device)
+                out_img_dx = torch.zeros(num_images, img_height, img_width, colors.shape[-1], device=xys.device)
+                out_img_dy = torch.zeros(num_images, img_height, img_width, colors.shape[-1], device=xys.device)
+                out_img_dxy = torch.zeros(num_images, img_height, img_width, colors.shape[-1], device=xys.device)
                 if have_T:
-                    out_T_dx = torch.zeros(img_height, img_width, 1, device=xys.device)
-                    out_T_dy = torch.zeros(img_height, img_width, 1, device=xys.device)
-                    out_T_dxy = torch.zeros(img_height, img_width, 1, device=xys.device)
-                    out_S_xy_cross = torch.zeros(img_height, img_width, 1, device=xys.device)
+                    out_T_dx = torch.zeros(num_images, img_height, img_width, 1, device=xys.device)
+                    out_T_dy = torch.zeros(num_images, img_height, img_width, 1, device=xys.device)
+                    out_T_dxy = torch.zeros(num_images, img_height, img_width, 1, device=xys.device)
+                    out_S_xy_cross = torch.zeros(num_images, img_height, img_width, 1, device=xys.device)
             else:
                 out_img_dx = out_img_dy = out_img_dxy = torch.empty(0, device=xys.device)
                 out_T_dx = out_T_dy = out_T_dxy = torch.empty(0, device=xys.device)
                 out_S_xy_cross = torch.empty(0, device=xys.device)
-            final_idx = torch.zeros(img_height, img_width, device=xys.device)
+            final_idx = torch.zeros(num_images, img_height, img_width, device=xys.device)
         else:
             rasterize_fn = _C.rasterize_forward
             
@@ -123,8 +126,10 @@ class _RasterizeGaussians(Function):
                 tile_bounds,
                 block,
                 img_size,
+                num_images,
+                num_intersects,
                 gaussian_ids_grouped,
-                tile_bins,
+                tile_offsets,
                 xys,
                 conics,
                 colors,
@@ -137,13 +142,14 @@ class _RasterizeGaussians(Function):
         ctx.num_intersects = num_intersects
         ctx.block_width = block_width
         ctx.extras = extras
+        ctx.num_images = num_images
 
         have_T_out = out_T is not None and out_T.numel() > 0
         have_T_d = out_T_dx is not None and out_T_dx.numel() > 0
 
         ctx.save_for_backward(
             gaussian_ids_grouped,
-            tile_bins,
+            tile_offsets,
             xys,
             conics,
             colors,
@@ -156,6 +162,19 @@ class _RasterizeGaussians(Function):
             out_S_xy_cross if have_T_d else None,
         )
 
+        if num_images == 1:
+            out_img = out_img.squeeze(0)
+            if out_T is not None and out_T.numel() > 0:
+                out_T = out_T.squeeze(0)
+            if out_img_dx is not None and out_img_dx.numel() > 0:
+                out_img_dx = out_img_dx.squeeze(0)
+                out_img_dy = out_img_dy.squeeze(0)
+                out_img_dxy = out_img_dxy.squeeze(0)
+            if out_T_dx is not None and out_T_dx.numel() > 0:
+                out_T_dx = out_T_dx.squeeze(0)
+                out_T_dy = out_T_dy.squeeze(0)
+                out_T_dxy = out_T_dxy.squeeze(0)
+
         return out_img, out_T, out_img_dx, out_img_dy, out_img_dxy, out_T_dx, out_T_dy, out_T_dxy
 
     @staticmethod
@@ -167,7 +186,7 @@ class _RasterizeGaussians(Function):
 
         (
             gaussian_ids_grouped,
-            tile_bins,
+            tile_offsets,
             xys,
             conics,
             colors,
@@ -194,8 +213,10 @@ class _RasterizeGaussians(Function):
                 img_height,
                 img_width,
                 ctx.block_width,
+                ctx.num_images,
+                ctx.num_intersects,
                 gaussian_ids_grouped,
-                tile_bins,
+                tile_offsets,
                 xys,
                 conics,
                 colors,
@@ -229,5 +250,6 @@ class _RasterizeGaussians(Function):
             None,  # img_height
             None,  # img_width
             None,  # block_width
+            None,  # num_images
             None,  # extras
         )

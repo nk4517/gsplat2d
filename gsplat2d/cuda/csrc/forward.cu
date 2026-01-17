@@ -169,23 +169,6 @@ __global__ void get_tile_bin_edges(
     }
 }
 
-// Kernel for computing tile bin edges from offsets
-__global__ void get_tile_bin_edges_from_offsets(
-    const int num_tiles,
-    const int num_intersects,
-    const int32_t* __restrict__ tile_counts,
-    const int32_t* __restrict__ offsets,
-    int2* __restrict__ tile_bins
-) {
-    unsigned idx = cg::this_grid().thread_rank();
-    if (idx >= num_tiles)
-        return;
-
-    int32_t start = offsets[idx];
-    int32_t count = tile_counts[idx];
-    tile_bins[idx] = {start, start + count};
-}
-
 // Fused kernel: iterate over gaussians, count intersections per tile
 __global__ void fused_map_and_count_kernel(
     const int num_points,
@@ -262,10 +245,14 @@ __global__ void compute_tile_bins_kernel(
 
 template<bool WITH_UPSCALE_GRADS>
 __global__ void rasterize_forward_unified(
+    const uint32_t num_images,
+    const uint32_t num_tiles_per_image,
+    const uint32_t tile_size,
+    const uint32_t n_isects,
     const dim3 tile_bounds,
     const dim3 img_size,
     const int32_t* __restrict__ gaussian_ids_grouped,
-    const int2* __restrict__ tile_bins,
+    const int32_t* __restrict__ tile_offsets,
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
     const float3* __restrict__ colors,
@@ -282,12 +269,26 @@ __global__ void rasterize_forward_unified(
     float* __restrict__ out_S_xy_cross
 ) {
     auto block = cg::this_thread_block();
-    int32_t tile_id =
-        block.group_index().y * tile_bounds.x + block.group_index().x;
+    uint32_t image_id = block.group_index().x;
+    int32_t tile_id = block.group_index().y * tile_bounds.x + block.group_index().z;
     unsigned i =
-        block.group_index().y * block.group_dim().y + block.thread_index().y;
+        block.group_index().y * tile_size + block.thread_index().y;
     unsigned j =
-        block.group_index().x * block.group_dim().x + block.thread_index().x;
+        block.group_index().z * tile_size + block.thread_index().x;
+
+    // Offset per-image buffers
+    const uint32_t pixels_per_image = img_size.x * img_size.y;
+    tile_offsets += image_id * num_tiles_per_image;
+    out_img += image_id * pixels_per_image;
+    if (out_T) out_T += image_id * pixels_per_image;
+    final_index += image_id * pixels_per_image;
+    if (out_img_dx) out_img_dx += image_id * pixels_per_image;
+    if (out_img_dy) out_img_dy += image_id * pixels_per_image;
+    if (out_img_dxy) out_img_dxy += image_id * pixels_per_image;
+    if (out_T_dx) out_T_dx += image_id * pixels_per_image;
+    if (out_T_dy) out_T_dy += image_id * pixels_per_image;
+    if (out_T_dxy) out_T_dxy += image_id * pixels_per_image;
+    if (out_S_xy_cross) out_S_xy_cross += image_id * pixels_per_image;
 
     float px = (float)j + 0.5;
     float py = (float)i + 0.5;
@@ -297,8 +298,12 @@ __global__ void rasterize_forward_unified(
     bool done = !inside;
     // keep not rasterizing threads around for reading data
 
-    // which gaussians to look through in this tile
-    int2 range = tile_bins[tile_id];
+    // which gaussians to look through in this tile (prefix sum format)
+    const int32_t range_start = tile_offsets[tile_id];
+    const bool is_last_tile = (image_id == num_images - 1) && (tile_id == (int32_t)num_tiles_per_image - 1);
+    const int32_t range_end = is_last_tile ? n_isects : tile_offsets[tile_id + 1];
+    const int2 range = {range_start, range_end};
+
     const int block_size = block.size();
     int num_batches = (range.y - range.x + block_size - 1) / block_size;
 
@@ -442,14 +447,14 @@ __global__ void rasterize_forward_unified(
 }
 
 template __global__ void rasterize_forward_unified<false>(
-    const dim3, const dim3, const int32_t* __restrict__, const int2* __restrict__,
+    const uint32_t, const uint32_t, const uint32_t, const uint32_t, const dim3, const dim3, const int32_t* __restrict__, const int32_t* __restrict__,
     const float2* __restrict__, const float3* __restrict__, const float3* __restrict__,
     const float* __restrict__, int* __restrict__, float3* __restrict__, float* __restrict__,
     float3* __restrict__, float3* __restrict__, float3* __restrict__,
     float* __restrict__, float* __restrict__, float* __restrict__, float* __restrict__);
 
 template __global__ void rasterize_forward_unified<true>(
-    const dim3, const dim3, const int32_t* __restrict__, const int2* __restrict__,
+    const uint32_t, const uint32_t, const uint32_t, const uint32_t, const dim3, const dim3, const int32_t* __restrict__, const int32_t* __restrict__,
     const float2* __restrict__, const float3* __restrict__, const float3* __restrict__,
     const float* __restrict__, int* __restrict__, float3* __restrict__, float* __restrict__,
     float3* __restrict__, float3* __restrict__, float3* __restrict__,

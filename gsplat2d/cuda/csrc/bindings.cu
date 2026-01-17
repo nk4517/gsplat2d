@@ -346,7 +346,6 @@ bin_and_group_gaussians_fused_tensor(
     // Pass 2: scatter gaussian_ids directly to grouped positions
     torch::Tensor tile_counters = torch::zeros({num_tiles}, opt.dtype(torch::kInt32));
     torch::Tensor gaussian_ids_grouped = torch::empty({num_intersects}, opt.dtype(torch::kInt32));
-    torch::Tensor tile_bins = torch::zeros({num_tiles, 2}, opt.dtype(torch::kInt32));
 
     if (num_intersects > 0) {
         fused_map_and_scatter_kernel<<<
@@ -362,20 +361,9 @@ bin_and_group_gaussians_fused_tensor(
             tile_counters.data_ptr<int32_t>(),
             gaussian_ids_grouped.data_ptr<int32_t>()
         );
-
-        // Compute tile bins
-        get_tile_bin_edges_from_offsets<<<
-            (num_tiles + N_THREADS - 1) / N_THREADS,
-            N_THREADS>>>(
-            num_tiles,
-            num_intersects,
-            tile_counts.data_ptr<int32_t>(),
-            offsets.data_ptr<int32_t>(),
-            (int2 *)tile_bins.data_ptr<int32_t>()
-        );
     }
 
-    return std::make_tuple(num_intersects, gaussian_ids_grouped, tile_bins);
+    return std::make_tuple(num_intersects, gaussian_ids_grouped, offsets);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -383,8 +371,10 @@ rasterize_forward_tensor(
     const std::tuple<int, int, int> tile_bounds,
     const std::tuple<int, int, int> block,
     const std::tuple<int, int, int> img_size,
+    const int num_images,
+    const int num_intersects,
     const torch::Tensor &gaussian_ids_grouped,
-    const torch::Tensor &tile_bins,
+    const torch::Tensor &tile_offsets,
     const torch::Tensor &xys,
     const torch::Tensor &conics,
     const torch::Tensor &colors,
@@ -393,7 +383,7 @@ rasterize_forward_tensor(
 ) {
     DEVICE_GUARD(xys);
     CHECK_INPUT(gaussian_ids_grouped);
-    CHECK_INPUT(tile_bins);
+    CHECK_INPUT(tile_offsets);
     CHECK_INPUT(xys);
     CHECK_INPUT(conics);
     CHECK_INPUT(colors);
@@ -419,9 +409,13 @@ rasterize_forward_tensor(
     const int channels = colors.size(1);
     const int img_width = img_size_dim3.x;
     const int img_height = img_size_dim3.y;
+    const int tile_width = tile_bounds_dim3.x;
+    const int tile_height = tile_bounds_dim3.y;
+    const int num_tiles = tile_width * tile_height;
+    const int block_width = block_dim3.x;
 
     torch::Tensor out_img = torch::zeros(
-        {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
+        {num_images, img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
     );
 
     bool compute_T = extras & RASTERIZE_EXTRAS_T;
@@ -431,11 +425,11 @@ rasterize_forward_tensor(
     torch::Tensor out_T;
     if (compute_T) {
         out_T = torch::zeros(
-            {img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
+            {num_images, img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
         );
     }
     torch::Tensor final_idx = torch::zeros(
-        {img_height, img_width}, xys.options().dtype(torch::kInt32)
+        {num_images, img_height, img_width}, xys.options().dtype(torch::kInt32)
     );
 
     torch::Tensor out_img_dx, out_img_dy, out_img_dxy;
@@ -443,34 +437,39 @@ rasterize_forward_tensor(
 
     if (compute_upscale_grads) {
         out_img_dx = torch::zeros(
-            {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
+            {num_images, img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
         );
         out_img_dy = torch::zeros(
-            {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
+            {num_images, img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
         );
         out_img_dxy = torch::zeros(
-            {img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
+            {num_images, img_height, img_width, channels}, xys.options().dtype(torch::kFloat32)
         );
         if (compute_T_upscale) {
             out_T_dx = torch::zeros(
-                {img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
+                {num_images, img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
             );
             out_T_dy = torch::zeros(
-                {img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
+                {num_images, img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
             );
             out_T_dxy = torch::zeros(
-                {img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
+                {num_images, img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
             );
             out_S_xy_cross = torch::zeros(
-                {img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
+                {num_images, img_height, img_width, 1}, xys.options().dtype(torch::kFloat32)
             );
         }
 
-        rasterize_forward_unified<true><<<tile_bounds_dim3, block_dim3>>>(
+        dim3 grid_dim3(num_images, tile_height, tile_width);
+        rasterize_forward_unified<true><<<grid_dim3, block_dim3>>>(
+            num_images,
+            num_tiles,
+            block_width,
+            num_intersects,
 	        tile_bounds_dim3,
 	        img_size_dim3,
 	        gaussian_ids_grouped.contiguous().data_ptr<int32_t>(),
-	        (int2 *)tile_bins.contiguous().data_ptr<int>(),
+	        tile_offsets.contiguous().data_ptr<int32_t>(),
 	        (float2 *)xys.contiguous().data_ptr<float>(),
 	        (float3 *)conics.contiguous().data_ptr<float>(),
 	        (float3 *)colors.contiguous().data_ptr<float>(),
@@ -487,11 +486,16 @@ rasterize_forward_tensor(
 	        compute_T_upscale ? out_S_xy_cross.contiguous().data_ptr<float>() : nullptr
         );
     } else {
-        rasterize_forward_unified<false><<<tile_bounds_dim3, block_dim3>>>(
+        dim3 grid_dim3(num_images, tile_height, tile_width);
+        rasterize_forward_unified<false><<<grid_dim3, block_dim3>>>(
+            num_images,
+            num_tiles,
+            block_width,
+            num_intersects,
             tile_bounds_dim3,
             img_size_dim3,
             gaussian_ids_grouped.contiguous().data_ptr<int32_t>(),
-            (int2 *)tile_bins.contiguous().data_ptr<int>(),
+            tile_offsets.contiguous().data_ptr<int32_t>(),
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),
             (float3 *)colors.contiguous().data_ptr<float>(),
@@ -524,8 +528,10 @@ std::
         const unsigned img_height,
         const unsigned img_width,
         const unsigned block_width,
+        const int num_images,
+        const int num_intersects,
         const torch::Tensor &gaussians_ids_grouped,
-        const torch::Tensor &tile_bins,
+        const torch::Tensor &tile_offsets,
         const torch::Tensor &xys,
         const torch::Tensor &conics,
         const torch::Tensor &colors,
@@ -567,7 +573,10 @@ std::
         (img_height + block_width - 1) / block_width,
         1
     };
-    const dim3 block(block_width, block_width, 1);
+    const int tile_width = tile_bounds.x;
+    const int tile_height = tile_bounds.y;
+    const int num_tiles = tile_width * tile_height;
+    const dim3 block_dim(block_width, block_width, 1);
     const dim3 img_size = {img_width, img_height, 1};
     const int channels = colors.size(1);
 
@@ -583,11 +592,16 @@ std::
         : torch::Tensor();
 
     if (v_output_dx.has_value()) {
-        rasterize_backward_kernel_unified<true><<<tile_bounds, block>>>(
+        dim3 grid_dim(num_images, tile_height, tile_width);
+        rasterize_backward_kernel_unified<true><<<grid_dim, block_dim>>>(
+            num_images,
+            num_tiles,
+            block_width,
+            num_intersects,
             tile_bounds,
             img_size,
             gaussians_ids_grouped.contiguous().data_ptr<int>(),
-            (int2 *)tile_bins.contiguous().data_ptr<int>(),
+            tile_offsets.contiguous().data_ptr<int32_t>(),
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),
             (float3 *)colors.contiguous().data_ptr<float>(),
@@ -613,11 +627,16 @@ std::
             opacities.has_value() ? v_opacity.contiguous().data_ptr<float>() : nullptr
         );
     } else {
-        rasterize_backward_kernel_unified<false><<<tile_bounds, block>>>(
+        dim3 grid_dim(num_images, tile_height, tile_width);
+        rasterize_backward_kernel_unified<false><<<grid_dim, block_dim>>>(
+            num_images,
+            num_tiles,
+            block_width,
+            num_intersects,
             tile_bounds,
             img_size,
             gaussians_ids_grouped.contiguous().data_ptr<int>(),
-            (int2 *)tile_bins.contiguous().data_ptr<int>(),
+            tile_offsets.contiguous().data_ptr<int32_t>(),
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),
             (float3 *)colors.contiguous().data_ptr<float>(),

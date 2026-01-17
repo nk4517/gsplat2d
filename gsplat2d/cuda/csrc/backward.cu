@@ -255,10 +255,14 @@ __global__ void project_gaussians_backward_kernel_cholesky(
 
 template<bool WITH_UPSCALE_GRADS>
 __global__ void rasterize_backward_kernel_unified(
+    const uint32_t num_images,
+    const uint32_t num_tiles_per_image,
+    const uint32_t tile_size,
+    const uint32_t n_isects,
     const dim3 tile_bounds,
     const dim3 img_size,
     const int32_t* __restrict__ gaussian_ids_grouped,
-    const int2* __restrict__ tile_bins,
+    const int32_t* __restrict__ tile_offsets,
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
     const float3* __restrict__ rgbs,
@@ -284,12 +288,30 @@ __global__ void rasterize_backward_kernel_unified(
     float* __restrict__ v_opacity
 ) {
     auto block = cg::this_thread_block();
-    int32_t tile_id =
-        block.group_index().y * tile_bounds.x + block.group_index().x;
+    uint32_t image_id = block.group_index().x;
+    int32_t tile_id = block.group_index().y * tile_bounds.x + block.group_index().z;
     unsigned i =
-        block.group_index().y * block.group_dim().y + block.thread_index().y;
+        block.group_index().y * tile_size + block.thread_index().y;
     unsigned j =
-        block.group_index().x * block.group_dim().x + block.thread_index().x;
+        block.group_index().z * tile_size + block.thread_index().x;
+
+    // Offset per-image buffers
+    const uint32_t pixels_per_image = img_size.x * img_size.y;
+    tile_offsets += image_id * num_tiles_per_image;
+    final_index += image_id * pixels_per_image;
+    if (out_T) out_T += image_id * pixels_per_image;
+    if (out_T_dx) out_T_dx += image_id * pixels_per_image;
+    if (out_T_dy) out_T_dy += image_id * pixels_per_image;
+    if (out_T_dxy) out_T_dxy += image_id * pixels_per_image;
+    if (out_S_xy_cross) out_S_xy_cross += image_id * pixels_per_image;
+    v_output += image_id * pixels_per_image;
+    if (v_T) v_T += image_id * pixels_per_image;
+    if (v_output_dx) v_output_dx += image_id * pixels_per_image;
+    if (v_output_dy) v_output_dy += image_id * pixels_per_image;
+    if (v_output_dxy) v_output_dxy += image_id * pixels_per_image;
+    if (v_T_dx) v_T_dx += image_id * pixels_per_image;
+    if (v_T_dy) v_T_dy += image_id * pixels_per_image;
+    if (v_T_dxy) v_T_dxy += image_id * pixels_per_image;
 
     const float px = (float)j + 0.5;
     const float py = (float)i + 0.5;
@@ -298,7 +320,11 @@ __global__ void rasterize_backward_kernel_unified(
     const bool inside = (i < img_size.y && j < img_size.x);
     const int bin_final = inside ? final_index[pix_id] : 0;
 
-    const int2 range = tile_bins[tile_id];
+    // which gaussians to look through in this tile (prefix sum format)
+    const int32_t range_start = tile_offsets[tile_id];
+    const bool is_last_tile = (image_id == num_images - 1) && (tile_id == (int32_t)num_tiles_per_image - 1);
+    const int32_t range_end = is_last_tile ? n_isects : tile_offsets[tile_id + 1];
+    const int2 range = {range_start, range_end};
     const int block_size = block.size();
     const int num_batches = (range.y - range.x + block_size - 1) / block_size;
 
@@ -491,7 +517,7 @@ __global__ void rasterize_backward_kernel_unified(
 }
 
 template __global__ void rasterize_backward_kernel_unified<false>(
-    const dim3, const dim3, const int32_t* __restrict__, const int2* __restrict__, const float2* __restrict__,
+    const uint32_t, const uint32_t, const uint32_t, const uint32_t, const dim3, const dim3, const int32_t* __restrict__, const int32_t* __restrict__, const float2* __restrict__,
     const float3* __restrict__, const float3* __restrict__, const float* __restrict__, const int* __restrict__,
     const float* __restrict__, const float* __restrict__, const float* __restrict__, const float* __restrict__, const float* __restrict__,
     const float3* __restrict__, const float* __restrict__,
@@ -500,7 +526,7 @@ template __global__ void rasterize_backward_kernel_unified<false>(
     float2* __restrict__, float2* __restrict__, float3* __restrict__, float3* __restrict__, float* __restrict__);
 
 template __global__ void rasterize_backward_kernel_unified<true>(
-    const dim3, const dim3, const int32_t* __restrict__, const int2* __restrict__, const float2* __restrict__,
+    const uint32_t, const uint32_t, const uint32_t, const uint32_t, const dim3, const dim3, const int32_t* __restrict__, const int32_t* __restrict__, const float2* __restrict__,
     const float3* __restrict__, const float3* __restrict__, const float* __restrict__, const int* __restrict__,
     const float* __restrict__, const float* __restrict__, const float* __restrict__, const float* __restrict__, const float* __restrict__,
     const float3* __restrict__, const float* __restrict__,

@@ -30,10 +30,14 @@ __global__ void project_gaussians_backward_kernel_cholesky(
 
 template<bool WITH_UPSCALE_GRADS>
 __global__ void rasterize_backward_kernel_unified(
+    const uint32_t num_images,
+    const uint32_t num_tiles_per_image,
+    const uint32_t tile_size,
+    const uint32_t n_isects,
     const dim3 tile_bounds,
     const dim3 img_size,
     const int32_t* __restrict__ gaussian_ids_grouped,
-    const int2* __restrict__ tile_bins,
+    const int32_t* __restrict__ tile_offsets,
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
     const float3* __restrict__ rgbs,
