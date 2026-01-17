@@ -107,6 +107,8 @@ def bin_and_group_gaussians_fused(
     extents: Float[Tensor, "batch 2"],
     tile_bounds: Tuple[int, int, int],
     block_size: int,
+    num_images: int = 1,
+    image_ids: Optional[Int[Tensor, "batch"]] = None,
 ) -> Tuple[
     int,
     Float[Tensor, "num_intersects 1"],
@@ -114,9 +116,11 @@ def bin_and_group_gaussians_fused(
 ]:
     return _C.bin_and_group_gaussians_fused(
         num_points,
+        num_images,
         xys.contiguous(),
         depths.contiguous(),
         extents.contiguous(),
+        image_ids.contiguous() if image_ids is not None else None,
         tile_bounds,
         block_size,
     )

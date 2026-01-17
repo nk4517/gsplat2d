@@ -51,8 +51,10 @@ __global__ void get_tile_bin_edges(
 
 __global__ void fused_map_and_count_kernel(
     const int num_points,
+    const int num_images,
     const float2* __restrict__ xys,
     const float2* __restrict__ extents,
+    const int32_t* __restrict__ image_ids,
     const dim3 tile_bounds,
     const unsigned block_width,
     int32_t* __restrict__ tile_counts
@@ -60,9 +62,11 @@ __global__ void fused_map_and_count_kernel(
 
 __global__ void fused_map_and_scatter_kernel(
     const int num_points,
+    const int num_images,
     const float2* __restrict__ xys,
     const float* __restrict__ depths,
     const float2* __restrict__ extents,
+    const int32_t* __restrict__ image_ids,
     const dim3 tile_bounds,
     const unsigned block_width,
     const int32_t* __restrict__ offsets,

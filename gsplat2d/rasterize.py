@@ -27,6 +27,7 @@ def rasterize_gaussians(
     img_width: int,
     block_width: int,
     num_images: int = 1,
+    image_ids: Optional[Int[Tensor, "*batch"]] = None,
     extras: int = 0,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     
@@ -51,6 +52,7 @@ def rasterize_gaussians(
         img_width,
         block_width,
         num_images,
+        image_ids,
         extras,
     )
 
@@ -71,6 +73,7 @@ class _RasterizeGaussians(Function):
         img_width: int,
         block_width: int,
         num_images: int,
+        image_ids: Optional[Int[Tensor, "*batch"]],
         extras: int,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         num_points = xys.size(0)
@@ -91,6 +94,8 @@ class _RasterizeGaussians(Function):
             extents,
             tile_bounds,
             block_width,
+            num_images,
+            image_ids,
         )
 
         have_OPA = opacities is not None and opacities.numel() > 0
@@ -251,5 +256,6 @@ class _RasterizeGaussians(Function):
             None,  # img_width
             None,  # block_width
             None,  # num_images
+            None,  # image_ids
             None,  # extras
         )

@@ -302,9 +302,11 @@ torch::Tensor get_tile_bin_edges_tensor(
 std::tuple<int, torch::Tensor, torch::Tensor>
 bin_and_group_gaussians_fused_tensor(
     const int num_points,
+    const int num_images,
     const torch::Tensor &xys,
     const torch::Tensor &depths,
     const torch::Tensor &extents,
+    const c10::optional<torch::Tensor> &image_ids,
     const std::tuple<int, int, int> tile_bounds,
     const unsigned block_width
 ) {
@@ -318,17 +320,20 @@ bin_and_group_gaussians_fused_tensor(
     tile_bounds_dim3.y = std::get<1>(tile_bounds);
     tile_bounds_dim3.z = std::get<2>(tile_bounds);
 
-    int num_tiles = tile_bounds_dim3.x * tile_bounds_dim3.y;
+    int num_tiles_per_image = tile_bounds_dim3.x * tile_bounds_dim3.y;
+    int total_tiles = num_images * num_tiles_per_image;
     auto opt = xys.options();
 
     // Pass 1: count intersections per tile
-    torch::Tensor tile_counts = torch::zeros({num_tiles}, opt.dtype(torch::kInt32));
+    torch::Tensor tile_counts = torch::zeros({total_tiles}, opt.dtype(torch::kInt32));
     fused_map_and_count_kernel<<<
         (num_points + N_THREADS - 1) / N_THREADS,
         N_THREADS>>>(
         num_points,
+        num_images,
         (float2 *)xys.contiguous().data_ptr<float>(),
         (float2 *)extents.contiguous().data_ptr<float>(),
+        image_ids.has_value() ? image_ids.value().contiguous().data_ptr<int32_t>() : nullptr,
         tile_bounds_dim3,
         block_width,
         tile_counts.data_ptr<int32_t>()
@@ -338,13 +343,13 @@ bin_and_group_gaussians_fused_tensor(
     torch::Tensor cumsum = torch::cumsum(tile_counts, 0, torch::kInt32);
     int num_intersects = cumsum[-1].item<int>();
     
-    torch::Tensor offsets = torch::zeros({num_tiles}, opt.dtype(torch::kInt32));
-    if (num_tiles > 1) {
+    torch::Tensor offsets = torch::zeros({total_tiles}, opt.dtype(torch::kInt32));
+    if (total_tiles > 1) {
         offsets.slice(0, 1) = cumsum.slice(0, 0, -1);
     }
 
     // Pass 2: scatter gaussian_ids directly to grouped positions
-    torch::Tensor tile_counters = torch::zeros({num_tiles}, opt.dtype(torch::kInt32));
+    torch::Tensor tile_counters = torch::zeros({total_tiles}, opt.dtype(torch::kInt32));
     torch::Tensor gaussian_ids_grouped = torch::empty({num_intersects}, opt.dtype(torch::kInt32));
 
     if (num_intersects > 0) {
@@ -352,9 +357,11 @@ bin_and_group_gaussians_fused_tensor(
             (num_points + N_THREADS - 1) / N_THREADS,
             N_THREADS>>>(
             num_points,
+            num_images,
             (float2 *)xys.contiguous().data_ptr<float>(),
             depths.contiguous().data_ptr<float>(),
             (float2 *)extents.contiguous().data_ptr<float>(),
+            image_ids.has_value() ? image_ids.value().contiguous().data_ptr<int32_t>() : nullptr,
             tile_bounds_dim3,
             block_width,
             offsets.data_ptr<int32_t>(),

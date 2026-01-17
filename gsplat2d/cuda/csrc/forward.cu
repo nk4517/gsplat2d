@@ -172,8 +172,10 @@ __global__ void get_tile_bin_edges(
 // Fused kernel: iterate over gaussians, count intersections per tile
 __global__ void fused_map_and_count_kernel(
     const int num_points,
+    const int num_images,
     const float2* __restrict__ xys,
     const float2* __restrict__ extents,
+    const int32_t* __restrict__ image_ids,
     const dim3 tile_bounds,
     const unsigned block_width,
     int32_t* __restrict__ tile_counts
@@ -184,13 +186,17 @@ __global__ void fused_map_and_count_kernel(
     if (extents[idx].x <= 0.f || extents[idx].y <= 0.f)
         return;
 
+    const int32_t num_tiles_per_image = tile_bounds.x * tile_bounds.y;
+    const int32_t image_id = image_ids ? image_ids[idx] : 0;
+    const int32_t tile_offset = image_id * num_tiles_per_image;
+
     float2 center = xys[idx];
     uint2 tile_min, tile_max;
     get_tile_bbox(center, extents[idx], tile_bounds, tile_min, tile_max, block_width);
 
     for (int i = tile_min.y; i < tile_max.y; ++i) {
         for (int j = tile_min.x; j < tile_max.x; ++j) {
-            int32_t tile_id = i * tile_bounds.x + j;
+            int32_t tile_id = tile_offset + i * tile_bounds.x + j;
             atomicAdd(&tile_counts[tile_id], 1);
         }
     }
@@ -199,9 +205,11 @@ __global__ void fused_map_and_count_kernel(
 // Fused kernel: iterate over gaussians, scatter directly to grouped buffers
 __global__ void fused_map_and_scatter_kernel(
     const int num_points,
+    const int num_images,
     const float2* __restrict__ xys,
     const float* __restrict__ depths,
     const float2* __restrict__ extents,
+    const int32_t* __restrict__ image_ids,
     const dim3 tile_bounds,
     const unsigned block_width,
     const int32_t* __restrict__ offsets,
@@ -214,13 +222,17 @@ __global__ void fused_map_and_scatter_kernel(
     if (extents[idx].x <= 0.f || extents[idx].y <= 0.f)
         return;
 
+    const int32_t num_tiles_per_image = tile_bounds.x * tile_bounds.y;
+    const int32_t image_id = image_ids ? image_ids[idx] : 0;
+    const int32_t tile_offset = image_id * num_tiles_per_image;
+
     float2 center = xys[idx];
     uint2 tile_min, tile_max;
     get_tile_bbox(center, extents[idx], tile_bounds, tile_min, tile_max, block_width);
 
     for (int i = tile_min.y; i < tile_max.y; ++i) {
         for (int j = tile_min.x; j < tile_max.x; ++j) {
-            int32_t tile_id = i * tile_bounds.x + j;
+            int32_t tile_id = tile_offset + i * tile_bounds.x + j;
             int32_t pos = offsets[tile_id] + atomicAdd(&tile_counters[tile_id], 1);
             gaussian_ids_out[pos] = idx;
         }
