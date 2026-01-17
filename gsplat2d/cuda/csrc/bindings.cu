@@ -383,7 +383,7 @@ rasterize_forward_tensor(
     const std::tuple<int, int, int> tile_bounds,
     const std::tuple<int, int, int> block,
     const std::tuple<int, int, int> img_size,
-    const torch::Tensor &gaussian_ids_sorted,
+    const torch::Tensor &gaussian_ids_grouped,
     const torch::Tensor &tile_bins,
     const torch::Tensor &xys,
     const torch::Tensor &conics,
@@ -392,7 +392,7 @@ rasterize_forward_tensor(
     unsigned extras
 ) {
     DEVICE_GUARD(xys);
-    CHECK_INPUT(gaussian_ids_sorted);
+    CHECK_INPUT(gaussian_ids_grouped);
     CHECK_INPUT(tile_bins);
     CHECK_INPUT(xys);
     CHECK_INPUT(conics);
@@ -469,7 +469,7 @@ rasterize_forward_tensor(
         rasterize_forward_unified<true><<<tile_bounds_dim3, block_dim3>>>(
 	        tile_bounds_dim3,
 	        img_size_dim3,
-	        gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
+	        gaussian_ids_grouped.contiguous().data_ptr<int32_t>(),
 	        (int2 *)tile_bins.contiguous().data_ptr<int>(),
 	        (float2 *)xys.contiguous().data_ptr<float>(),
 	        (float3 *)conics.contiguous().data_ptr<float>(),
@@ -490,7 +490,7 @@ rasterize_forward_tensor(
         rasterize_forward_unified<false><<<tile_bounds_dim3, block_dim3>>>(
             tile_bounds_dim3,
             img_size_dim3,
-            gaussian_ids_sorted.contiguous().data_ptr<int32_t>(),
+            gaussian_ids_grouped.contiguous().data_ptr<int32_t>(),
             (int2 *)tile_bins.contiguous().data_ptr<int>(),
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),
@@ -524,7 +524,7 @@ std::
         const unsigned img_height,
         const unsigned img_width,
         const unsigned block_width,
-        const torch::Tensor &gaussians_ids_sorted,
+        const torch::Tensor &gaussians_ids_grouped,
         const torch::Tensor &tile_bins,
         const torch::Tensor &xys,
         const torch::Tensor &conics,
@@ -586,7 +586,7 @@ std::
         rasterize_backward_kernel_unified<true><<<tile_bounds, block>>>(
             tile_bounds,
             img_size,
-            gaussians_ids_sorted.contiguous().data_ptr<int>(),
+            gaussians_ids_grouped.contiguous().data_ptr<int>(),
             (int2 *)tile_bins.contiguous().data_ptr<int>(),
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),
@@ -616,7 +616,7 @@ std::
         rasterize_backward_kernel_unified<false><<<tile_bounds, block>>>(
             tile_bounds,
             img_size,
-            gaussians_ids_sorted.contiguous().data_ptr<int>(),
+            gaussians_ids_grouped.contiguous().data_ptr<int>(),
             (int2 *)tile_bins.contiguous().data_ptr<int>(),
             (float2 *)xys.contiguous().data_ptr<float>(),
             (float3 *)conics.contiguous().data_ptr<float>(),

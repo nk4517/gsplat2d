@@ -264,7 +264,7 @@ template<bool WITH_UPSCALE_GRADS>
 __global__ void rasterize_forward_unified(
     const dim3 tile_bounds,
     const dim3 img_size,
-    const int32_t* __restrict__ gaussian_ids_sorted,
+    const int32_t* __restrict__ gaussian_ids_grouped,
     const int2* __restrict__ tile_bins,
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
@@ -327,7 +327,7 @@ __global__ void rasterize_forward_unified(
         int idx = batch_start + tr;
         if (idx < range.y) {
             // each thread fetch 1 gaussian from front to back
-            int32_t g_id = gaussian_ids_sorted[idx];
+            int32_t g_id = gaussian_ids_grouped[idx];
             id_batch[tr] = g_id;
             xy_batch[tr] = xys[g_id];
             conic_batch[tr] = conics[g_id];

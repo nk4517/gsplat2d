@@ -32,7 +32,7 @@ template<bool WITH_UPSCALE_GRADS>
 __global__ void rasterize_backward_kernel_unified(
     const dim3 tile_bounds,
     const dim3 img_size,
-    const int32_t* __restrict__ gaussian_ids_sorted,
+    const int32_t* __restrict__ gaussian_ids_grouped,
     const int2* __restrict__ tile_bins,
     const float2* __restrict__ xys,
     const float3* __restrict__ conics,
